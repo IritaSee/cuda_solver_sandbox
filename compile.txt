@@ -1,0 +1,1 @@
+nvcc -o solve_ode_bdf solve_ode_bdf.cu -lcusolver -lcublas
