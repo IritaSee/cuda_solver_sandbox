@@ -3,79 +3,9 @@
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <vector>
+#include <cmath>
 
-double *ALGEBRAIC;
-double *CONSTANTS;
-double *RATES;
-double *STATES;
-
-__device__ void initConsts(double* CONSTANTS, double* RATES, double *STATES)
-{
-STATES[0] = -86.2;
-CONSTANTS[0] = 8.314;
-CONSTANTS[1] = 310;
-CONSTANTS[2] = 96.485;
-CONSTANTS[3] = 185;
-CONSTANTS[4] = 16404;
-CONSTANTS[5] = 10;
-CONSTANTS[6] = 1000;
-CONSTANTS[7] = 1;
-CONSTANTS[8] = -52;
-CONSTANTS[9] = 0.03;
-CONSTANTS[10] = 5.4;
-CONSTANTS[11] = 140;
-STATES[1] = 138.3;
-STATES[2] = 11.6;
-CONSTANTS[12] = 2;
-STATES[3] = 0.0002;
-CONSTANTS[13] = 5.405;
-CONSTANTS[14] = 0.096;
-STATES[4] = 0;
-STATES[5] = 1;
-CONSTANTS[15] = 0.062;
-STATES[6] = 0;
-CONSTANTS[16] = 14.838;
-STATES[7] = 0;
-STATES[8] = 0.75;
-STATES[9] = 0.75;
-CONSTANTS[17] = 0.00029;
-CONSTANTS[18] = 0.175;
-STATES[10] = 0;
-STATES[11] = 1;
-STATES[12] = 1;
-CONSTANTS[19] = 0.000592;
-CONSTANTS[20] = 0.294;
-STATES[13] = 1;
-STATES[14] = 0;
-CONSTANTS[21] = 1.362;
-CONSTANTS[22] = 1;
-CONSTANTS[23] = 40;
-CONSTANTS[24] = 1000;
-CONSTANTS[25] = 0.1;
-CONSTANTS[26] = 2.5;
-CONSTANTS[27] = 0.35;
-CONSTANTS[28] = 1.38;
-CONSTANTS[29] = 87.5;
-CONSTANTS[30] = 0.825;
-CONSTANTS[31] = 0.0005;
-CONSTANTS[32] = 0.0146;
-STATES[15] = 0.2;
-STATES[16] = 1;
-CONSTANTS[33] = 2;
-CONSTANTS[34] = 0.016464;
-CONSTANTS[35] = 0.25;
-CONSTANTS[36] = 0.008232;
-CONSTANTS[37] = 0.00025;
-CONSTANTS[38] = 8e-5;
-CONSTANTS[39] = 0.000425;
-CONSTANTS[40] = 0.15;
-CONSTANTS[41] = 0.001;
-CONSTANTS[42] = 10;
-CONSTANTS[43] = 0.3;
-CONSTANTS[44] = 1094;
-CONSTANTS[45] = 2.00000;
-}
-
+// Define the computeRates function for the system of ODEs
 __device__ void computeRates(double VOI, double* CONSTANTS, double* RATES, double* STATES, double* ALGEBRAIC)
 {
 ALGEBRAIC[8] = 1.00000/(1.00000+exp((STATES[0]+20.0000)/7.00000));
@@ -239,62 +169,33 @@ ALGEBRAIC[66] =  (CONSTANTS[4]/CONSTANTS[44])*(ALGEBRAIC[63] - (ALGEBRAIC[62]+AL
 ALGEBRAIC[68] = 1.00000/(1.00000+( CONSTANTS[42]*CONSTANTS[43])/pow(STATES[15]+CONSTANTS[43], 2.00000));
 }
 
-// Define the function f(t, y) for the system of ODEs dy/dt = f(t, y)
-// __global__ void ODEFunction(double *y, double *dy, double t, int n) {
-//     // ODE system: dy/dt = A * y, where A is a diagonal matrix with different coefficients
-//     for (int i = 0; i < n; ++i) {
-//         switch (i) {
-//             case 0: dy[i] = -2.0 * y[i]; break;   // dy1/dt = -2 * y1
-//             case 1: dy[i] = -1.0 * y[i]; break;   // dy2/dt = -y2
-//             case 2: dy[i] = -0.5 * y[i]; break;   // dy3/dt = -0.5 * y3
-//             case 3: dy[i] = -0.25 * y[i]; break;  // dy4/dt = -0.25 * y4
-//             case 4: dy[i] = -0.1 * y[i]; break;   // dy5/dt = -0.1 * y5
-//         }
-//     }
-// }
-
-__global__ void bridgeFunction(double t, double* STATES, double* RATES, double* CONSTANTS, double* ALGEBRAIC){
-
-    initConsts(CONSTANTS, RATES, STATES);
-    
-    computeRates(t, CONSTANTS, RATES, STATES, ALGEBRAIC);
-
-    computeVariables(t, CONSTANTS, RATES, STATES, ALGEBRAIC);
-
+// Kernel to update the rates
+__global__ void ODEKernel(double VOI, double *CONSTANTS, double *RATES, double *STATES, double *ALGEBRAIC, int n) {
+    computeRates(VOI, CONSTANTS, RATES, STATES, ALGEBRAIC);
 }
 
-
 // Solve the system of ODEs using BDF
-void solveODEBDF(double t0, double t1, double* STATES, double* RATES, double* CONSTANTS, double* ALGEBRAIC, int n, int steps) {
+void solveODEBDF(double t0, double t1, double *y0, double *CONSTANTS, int n, int steps) {
     cublasHandle_t cublasHandle;
     cublasCreate(&cublasHandle);
-
-    int num_of_constants = 45;
-    int num_of_states = 17;
-    int num_of_algebraic = 69;
-    int num_of_rates = 17;
 
     double dt = (t1 - t0) / steps;
     double t = t0;
 
-    // Allocate memory for y and dy
-    double *d_ALGEBRAIC;
-    double *d_CONSTANTS;
-    double *d_RATES;
-    double *d_STATES;
+    // Allocate memory for y, dy, constants, and algebraic variables
+    double *d_y, *d_dy, *d_CONSTANTS, *d_ALGEBRAIC;
+    cudaMalloc(&d_y, n * sizeof(double));
+    cudaMalloc(&d_dy, n * sizeof(double));
+    cudaMalloc(&d_CONSTANTS, n * sizeof(double));
+    cudaMalloc(&d_ALGEBRAIC, n * sizeof(double) * 50); // Assuming we have 50 algebraic variables
 
-    cudaMalloc(&d_ALGEBRAIC, num_of_algebraic * sizeof(double));
-    cudaMalloc(&d_CONSTANTS, num_of_constants * sizeof(double));
-    cudaMalloc(&d_RATES, num_of_rates * sizeof(double));
-    cudaMalloc(&d_STATES, num_of_states * sizeof(double));
-
-    // Initialize y with initial conditions
-    // cudaMemcpy(d_y, y0, n * sizeof(double), cudaMemcpyHostToDevice);
+    // Initialize y with initial conditions and copy constants to the device
+    cudaMemcpy(d_y, y0, n * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_CONSTANTS, CONSTANTS, n * sizeof(double), cudaMemcpyHostToDevice);
 
     for (int i = 0; i < steps; ++i) {
         // Compute dy = f(t, y)
-        // ODEFunction<<<1, n>>>(d_y, d_dy, t, n);
-        bridgeFunction<<<1,n>>>(t, STATES, RATES, CONSTANTS, ALGEBRAIC);
+        ODEKernel<<<1, n>>>(t, d_CONSTANTS, d_dy, d_y, d_ALGEBRAIC, n);
         cudaDeviceSynchronize();
 
         // Solve the linear system (I - dt * J) * y_new = y_old
@@ -302,61 +203,42 @@ void solveODEBDF(double t0, double t1, double* STATES, double* RATES, double* CO
         // y_new = y_old + dt * f(t, y)
 
         double alpha = dt;
-        cublasDaxpy(cublasHandle, n, &alpha, RATES, 1, STATES, 1); // y_new = y_old + dt * dy
+        cublasDaxpy(cublasHandle, n, &alpha, d_dy, 1, d_y, 1); // y_new = y_old + dt * dy
 
         // Update time
         t += dt;
     }
 
     // Copy the result back to host
-    cudaMemcpy(STATES, d_STATES, n * sizeof(double), cudaMemcpyDeviceToHost);
-    
+    cudaMemcpy(y0, d_y, n * sizeof(double), cudaMemcpyDeviceToHost);
 
     // Clean up
-    cudaFree(d_ALGEBRAIC);
+    cudaFree(d_y);
+    cudaFree(d_dy);
     cudaFree(d_CONSTANTS);
-    cudaFree(d_STATES);
-    cudaFree(d_RATES);
-
+    cudaFree(d_ALGEBRAIC);
     cublasDestroy(cublasHandle);
 }
-
-
 
 int main() {
     double t0 = 0.0;
     double t1 = 1.0;
-    int n = 17;  // Number of ODEs
+    int n = 17;  // Assuming we have 17 states
     int steps = 10;
 
-    int num_of_constants = 45;
-    int num_of_states = 17;
-    int num_of_algebraic = 69;
-    int num_of_rates = 17;
+    // Initial conditions for the ODEs (initialize with appropriate values)
+    std::vector<double> y0(n, 1.0); // Example initial conditions
 
-    STATES = (double *)malloc(num_of_states  * sizeof(double));
-    RATES = (double *)malloc(num_of_rates  * sizeof(double));
-    ALGEBRAIC = (double *)malloc(num_of_algebraic  * sizeof(double));
-    CONSTANTS = (double *)malloc(num_of_constants  * sizeof(double));
+    // Constants for the ODEs (initialize with appropriate values)
+    std::vector<double> CONSTANTS(n, 1.0); // Example constants
 
-    // Initial conditions for the 5 ODEs
-    // std::vector<double> y0 = {1.0, 1.0, 1.0, 1.0, 1.0};
-    for(int loop=0; loop < 100; loop++){
-        solveODEBDF(t0, t1, STATES, RATES, CONSTANTS, ALGEBRAIC, n, steps);
-        for (int i = 0; i < n; ++i) {
-        std::cout << "rates " << i << " = " << RATES[i] << std::endl;
-    }
-        printf("\n");
-        t0 = t1;
-        t1 = t1+0.5;
-    }
-    
+    solveODEBDF(t0, t1, y0.data(), CONSTANTS.data(), n, steps);
 
     // Output the solutions at t = t1
-    // std::cout << "Solutions at t = " << t1 << " are:" << std::endl;
-    // for (int i = 0; i < n; ++i) {
-    //     std::cout << "y" << i + 1 << " = " << y0[i] << std::endl;
-    // }
+    std::cout << "Solutions at t = " << t1 << " are:" << std::endl;
+    for (int i = 0; i < n; ++i) {
+        std::cout << "y" << i + 1 << " = " << y0[i] << std::endl;
+    }
 
     return 0;
 }
