@@ -9,7 +9,7 @@ double *CONSTANTS;
 double *RATES;
 double *STATES;
 
-__device__ void initConsts(double* CONSTANTS, double* RATES, double *STATES)
+__global__ void initConsts(double* CONSTANTS, double* RATES, double *STATES)
 {
 STATES[0] = -86.2;
 CONSTANTS[0] = 8.314;
@@ -254,8 +254,6 @@ ALGEBRAIC[68] = 1.00000/(1.00000+( CONSTANTS[42]*CONSTANTS[43])/pow(STATES[15]+C
 // }
 
 __global__ void bridgeFunction(double t, double* STATES, double* RATES, double* CONSTANTS, double* ALGEBRAIC){
-
-    initConsts(CONSTANTS, RATES, STATES);
     
     computeRates(t, CONSTANTS, RATES, STATES, ALGEBRAIC);
 
@@ -265,7 +263,7 @@ __global__ void bridgeFunction(double t, double* STATES, double* RATES, double* 
 
 
 // Solve the system of ODEs using BDF
-void solveODEBDF(double t0, double t1, double* STATES, double* RATES, double* CONSTANTS, double* ALGEBRAIC, int n, int steps) {
+void solveODEBDF(double t0, double t1, double* STATES, double* RATES, double* CONSTANTS, double* ALGEBRAIC, int n, int steps, bool init) {
     cublasHandle_t cublasHandle;
     cublasCreate(&cublasHandle);
 
@@ -290,7 +288,12 @@ void solveODEBDF(double t0, double t1, double* STATES, double* RATES, double* CO
 
     // Initialize y with initial conditions
     // cudaMemcpy(d_y, y0, n * sizeof(double), cudaMemcpyHostToDevice);
-
+    if (init == true){
+    initConsts<<<1,n>>>(CONSTANTS, RATES, STATES);
+    cudaDeviceSynchronize();
+    // init == true;
+    }
+    
     for (int i = 0; i < steps; ++i) {
         // Compute dy = f(t, y)
         // ODEFunction<<<1, n>>>(d_y, d_dy, t, n);
@@ -328,6 +331,7 @@ int main() {
     double t1 = 1.0;
     int n = 17;  // Number of ODEs
     int steps = 10;
+    bool init = true;
 
     int num_of_constants = 45;
     int num_of_states = 17;
@@ -342,7 +346,8 @@ int main() {
     // Initial conditions for the 5 ODEs
     // std::vector<double> y0 = {1.0, 1.0, 1.0, 1.0, 1.0};
     for(int loop=0; loop < 100; loop++){
-        solveODEBDF(t0, t1, STATES, RATES, CONSTANTS, ALGEBRAIC, n, steps);
+        solveODEBDF(t0, t1, STATES, RATES, CONSTANTS, ALGEBRAIC, n, steps, init);
+        init = false;
         for (int i = 0; i < n; ++i) {
         std::cout << "rates " << i << " = " << RATES[i] << std::endl;
     }
